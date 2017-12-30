@@ -43,8 +43,7 @@ function toggleAll() {
   }
 }
 
-// Download all visible checked links.
-new 
+// Download all visible checked links. 
 function downloadCheckedLinks() {
   for (var i = 0; i < visibleLinks.length; ++i) {
     if (document.getElementById('check' + i).checked) {
