@@ -1,4 +1,6 @@
 import click
+import math
+import random
 import requests
 import threading
 from appJar import gui
@@ -8,6 +10,16 @@ progress = dict()
 thread_progress = dict()
 chunks = dict()
 dl_id_counter = 0
+
+incremental_timer = 0
+last_cur_speed = 0
+incremental = False
+
+low_regret = True
+last_action = -1
+w0 = 1
+w1 = 1
+
 
 def start_gui():
     def threaded_button_handler(button):
@@ -78,22 +90,22 @@ def Handler(url, filename, dl_id, help_others=True):
 
     if help_others:
         best_thread = me
-        mn = 1
+        mn = 0
         for key, values in chunks[dl_id].items():
-            if thread_progress[key]/(values[1]-values[0]) < mn:
-                mn = thread_progress[key]/(values[1]-values[0])
+            if (values[1]-values[0])-thread_progress[key] > mn:
+                mn = (values[1]-values[0])-thread_progress[key]
                 best_thread = key
-        if best_thread != me:
-            new_end = (chunks[dl_id][best_thread][1]+thread_progress[best_thread])//2
+        if best_thread != me and mn > (8)*(12):
+            new_end = (chunks[dl_id][best_thread][1]+thread_progress[best_thread]+chunks[dl_id][best_thread][0])//2
             end = chunks[dl_id][best_thread][1]
             chunks[dl_id][best_thread] = (chunks[dl_id][best_thread][0], new_end)
             chunks[dl_id][me] = (new_end, end)
             print("Dbug Info"+str(me))
-            Handler(url, filename, dl_id, False)
+            Handler(url, filename, dl_id, True)
 
 
 def download_file(app,url, dest=""):
-    number_of_threads = 8
+    number_of_threads = 4
     r = requests.head(url)
     if dest != "":
         file_name = dest
@@ -123,6 +135,8 @@ def download_file(app,url, dest=""):
     app.addLabel(tabname+"speed label","Cur Speed: %d, Avg Speed %d"%(0,0))
     helper = [time.time(), time.time(), 0]
 
+
+
     def update_meter():
         if helper[2] >= file_size:
             return
@@ -133,6 +147,61 @@ def download_file(app,url, dest=""):
         helper[2]=progress[dl_id]
         app.setMeter(tabname + "progress", (progress[dl_id]/file_size)*100)
         app.setLabel(tabname+"speed label","Cur Speed: %d KB/s, Avg Speed %d KB/s " % (curspeed, avgspeed))
+
+        global incremental_timer
+        global last_cur_speed
+        global last_action, w0, w1
+        global incremental
+
+        if incremental:
+
+            incremental_timer += 1
+            if incremental_timer % 25 == 0:
+                if curspeed - last_cur_speed > 100:
+                    last_cur_speed =curspeed
+                    print("Added")
+                    temp = threading.Thread(target=Handler,
+                                         kwargs={'url': url, 'filename': file_name, "dl_id": dl_id})
+                    my_chunks[temp] = chunks[dl_id][temp] = (0,0)
+                    temp.setDaemon(True)
+                    temp.start()
+                else:
+
+                    incremental = 0
+
+        if low_regret:
+            incremental_timer += 1
+            if incremental_timer % 25 == 0:
+                r = 0.5
+                eta = 0.1
+                if curspeed - last_cur_speed > 100:
+                    r = 1
+                else:
+                    r = 0
+                p0 = (1 - eta) * (w0 / (w1 + w0)) + eta / 2
+                p1 = 1 - p0
+                if last_action == 1:
+                    w1 *= math.exp((eta/2)*r/p1)
+                elif last_action == 0:
+                    r = 0.5
+                    w0 *= math.exp((eta/2)*r/p0)
+                last_cur_speed = curspeed
+                p0 = (1-eta)*(w0/(w1+w0))+eta/2
+                p1 = 1-p0
+                if random.uniform(0, 1) < p1:
+                    last_action=1
+                    print("Added")
+                    temp = threading.Thread(target=Handler,
+                                            kwargs={'url': url, 'filename': file_name, "dl_id": dl_id})
+                    my_chunks[temp] = chunks[dl_id][temp] = (0, 0)
+                    temp.setDaemon(True)
+                    temp.start()
+                else:
+                    last_action=0
+
+
+
+
 
     app.registerEvent(update_meter)
     app.stopTab()
@@ -154,10 +223,7 @@ def download_file(app,url, dest=""):
         list_threads.append(t)
         t.start()
 
-    #main_thread = threading.current_thread()
-    for t in list_threads:
-        t.join()
-    print('%s downloaded' % file_name)
+    #main_thread = threading.current_thread()2
 
 if __name__ == "__main__":
     start_gui()
